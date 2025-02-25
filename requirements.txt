@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+langchain
+beautifulsoup4
+requests
+streamlit
+groq
+langchain-groq
+faiss-cpu
+gunicorn 
