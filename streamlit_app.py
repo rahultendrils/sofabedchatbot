@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 # Use local development URL instead of Heroku
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = "https://sofabed-chatbot-backend.onrender.com"  # We'll get this URL after deploying to Render
 
 # Initialize session state for chat history and user input
 if "messages" not in st.session_state:

@@ -2,10 +2,12 @@ fastapi
 uvicorn
 python-dotenv
 langchain
+langchain-community
 beautifulsoup4
 requests
 streamlit
 groq
 langchain-groq
 faiss-cpu
-gunicorn 
+gunicorn
+sentence-transformers 
