@@ -3,11 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from langchain.text_splitter import CharacterTextSplitter  # Simpler splitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-import gc  # For garbage collection
+import gc
 
 # Load environment variables
 load_dotenv()
@@ -38,30 +37,40 @@ if not GROQ_API_KEY:
 
 # Initialize minimal embeddings model
 embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",  # Smallest model
+    model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",
     model_kwargs={'device': 'cpu'}
 )
 
 # Load and process content only once at startup
+def chunk_text(text, chunk_size=200, overlap=20):
+    chunks = []
+    start = 0
+    text_len = len(text)
+    
+    while start < text_len:
+        end = start + chunk_size
+        if end > text_len:
+            end = text_len
+        chunks.append(text[start:end])
+        start = end - overlap
+    
+    return chunks
+
+# Load and process content
 with open('website_content2.txt', 'r', encoding='utf-8') as file:
     raw_text = file.read()
 
-# Use simpler text splitter with smaller chunks
-text_splitter = CharacterTextSplitter(
-    chunk_size=200,  # Very small chunks
-    chunk_overlap=20,
-    length_function=len
-)
-texts = text_splitter.split_text(raw_text)
+# Create chunks manually to avoid langchain dependency
+texts = chunk_text(raw_text)
 
 # Create vector store with minimal configuration
 vectorstore = FAISS.from_texts(
     texts, 
     embeddings,
-    n_lists=50  # Reduce index size
+    n_lists=50
 )
 
-# Initialize Groq client with minimal config
+# Initialize Groq client
 llm = ChatGroq(
     temperature=0.7,
     groq_api_key=GROQ_API_KEY,
@@ -79,13 +88,13 @@ async def chat(request: ChatRequest):
         # Get relevant documents
         docs = vectorstore.similarity_search(
             request.question, 
-            k=2  # Reduce number of results
+            k=2
         )
         
         # Prepare context
         context = "\n".join(doc.page_content for doc in docs)
         
-        # Generate response using minimal prompt
+        # Generate response
         prompt = f"Context: {context}\nQuestion: {request.question}\nAnswer:"
         response = llm.invoke(prompt)
         
