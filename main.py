@@ -3,13 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import CharacterTextSplitter  # Simpler splitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
 from langchain_groq import ChatGroq
-from langchain.memory import ConversationBufferMemory
-import pickle
+import gc  # For garbage collection
 
 # Load environment variables
 load_dotenv()
@@ -38,81 +36,73 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY not found in environment variables")
 
-# Function to load or create vector store
-def get_vectorstore():
-    vector_store_path = 'vectorstore.pkl'
-    
-    if os.path.exists(vector_store_path):
-        with open(vector_store_path, 'rb') as f:
-            return pickle.load(f)
-    
-    # Load and process the website content
-    with open('website_content2.txt', 'r', encoding='utf-8') as file:
-        raw_text = file.read()
-
-    # Split text into smaller chunks
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,  # Reduced chunk size
-        chunk_overlap=50,  # Reduced overlap
-        length_function=len
-    )
-    texts = text_splitter.split_text(raw_text)
-
-    # Create embeddings with minimal model
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",  # Smaller model
-        model_kwargs={'device': 'cpu'}
-    )
-    
-    vectorstore = FAISS.from_texts(texts, embeddings)
-    
-    # Save vector store
-    with open(vector_store_path, 'wb') as f:
-        pickle.dump(vectorstore, f)
-    
-    return vectorstore
-
-# Initialize conversation memory with limited history
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    return_messages=True,
-    k=3  # Keep only last 3 exchanges
+# Initialize minimal embeddings model
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",  # Smallest model
+    model_kwargs={'device': 'cpu'}
 )
 
-# Create conversation chain with Groq
+# Load and process content only once at startup
+with open('website_content2.txt', 'r', encoding='utf-8') as file:
+    raw_text = file.read()
+
+# Use simpler text splitter with smaller chunks
+text_splitter = CharacterTextSplitter(
+    chunk_size=200,  # Very small chunks
+    chunk_overlap=20,
+    length_function=len
+)
+texts = text_splitter.split_text(raw_text)
+
+# Create vector store with minimal configuration
+vectorstore = FAISS.from_texts(
+    texts, 
+    embeddings,
+    n_lists=50  # Reduce index size
+)
+
+# Initialize Groq client with minimal config
 llm = ChatGroq(
     temperature=0.7,
     groq_api_key=GROQ_API_KEY,
     model_name="mixtral-8x7b-32768"
 )
 
-# Initialize vectorstore
-vectorstore = get_vectorstore()
-
-# Create QA chain
-qa_chain = ConversationalRetrievalChain.from_llm(
-    llm=llm,
-    retriever=vectorstore.as_retriever(search_kwargs={"k": 2}),  # Reduced number of results
-    memory=memory,
-)
+# Clean up memory
+del texts
+del raw_text
+gc.collect()
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        response = qa_chain({"question": request.question})
-        return ChatResponse(answer=response['answer'])
+        # Get relevant documents
+        docs = vectorstore.similarity_search(
+            request.question, 
+            k=2  # Reduce number of results
+        )
+        
+        # Prepare context
+        context = "\n".join(doc.page_content for doc in docs)
+        
+        # Generate response using minimal prompt
+        prompt = f"Context: {context}\nQuestion: {request.question}\nAnswer:"
+        response = llm.invoke(prompt)
+        
+        # Clean up
+        del docs
+        del context
+        gc.collect()
+        
+        return ChatResponse(answer=str(response))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Add health check endpoint
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
-PORT = int(os.getenv("PORT", "10000"))  # Render assigns a port via PORT env variable
-
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "10000"))
-    print(f"Starting server on port {port}")  # Add logging
     uvicorn.run(app, host="0.0.0.0", port=port) 
